@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta
+from datetime import timedelta
 from xero_python.accounting import AccountingApi
 
 
@@ -41,64 +41,125 @@ accounting_api.get_bank_transactions(xero_tenant_id, where='Total=4500 && status
 """
 
 
-def find_matching_bank_transaction(xero_tenant_id, api_client):
+def find_or_create_bank_transaction(xero_tenant_id, api_client, target_date, target_amount):
     """
-    Search for bank transactions matching specific amount and date.
-    Returns a tuple of (matches, error_message)
+    Search for bank transactions matching specific criteria using where filter and pagination.
+    If no matching transaction is found, create a new one.
+    Based on Sally's suggestion from Xero support.
+    Returns a tuple of (result, error_message)
     """
     accounting_api = AccountingApi(api_client)
 
-    # Search criteria
-    target_date = datetime(2025, 5, 30)
-    target_amount = 4500.00
-
-    # Allow for some flexibility in amount (±1%)
-    min_amount = target_amount * 0.99
-    max_amount = target_amount * 1.01
+    # Hardcoded search criteria as requested
+    target_reference = "SMART Agency"
 
     try:
-        # Query Xero API for unreconciled transactions
+        # Search for existing bank transactions using where filter as Sally suggested
+        where_filter = f'Total=={target_amount} && Status!="DELETED"'
+        print(f"Searching for bank transactions with filter: {where_filter}")
+        # import ipdb; ipdb.set_trace()
         transactions = accounting_api.get_bank_transactions(
             xero_tenant_id,
-            where="IsReconciled==false",
-            # where="Status==\"AUTHORISED\" AND IsReconciled==false",
-            order="Date DESC"
+            where=(
+                f'Total=={target_amount} && '
+                # f'Total=={target_amount} && Status!="DELETED" && '
+                f'Date>=DateTime({target_date.year},{target_date.month:02d},{target_date.day:02d})'
+            ),
+            order="Date DESC",
+            if_modified_since=target_date
+        )
+        invoices = accounting_api.get_invoices(
+            xero_tenant_id,
+            where=(
+                f'Total=={target_amount} && '
+                # f'Total=={target_amount} && Status!="DELETED" && '
+                f'Date>=DateTime({target_date.year},{target_date.month:02d},{target_date.day:02d})'
+            ),
+            order="Date DESC",
+        )
+        not_found = len(transactions.bank_transactions) == 0 and len(invoices.invoices) == 0
+        return transactions.bank_transactions, invoices.invoices
+        if not_found:
+            print(
+                "!!!!!! NO matching transaction found. "
+                f"target_date: {target_date}, target_mount {target_amount}"
+            )
+        else:
+            print(
+                "Found matching transaction."
+                f"target_date: {target_date}, target_mount {target_amount}"
+            )
+
+        return None, None
+
+        print(f"Found {len(transactions.bank_transactions)} transactions matching amount criteria")
+
+        # Look for matches with date (reference is editable so don't require exact match)
+        date_matches = []
+        for tx in transactions.bank_transactions:
+            # Check if date matches - this is the primary criteria since reference is editable
+            if tx.date == target_date:
+                date_matches.append({
+                    'bank_transaction_id': tx.bank_transaction_id,
+                    'total': tx.total,
+                    'reference': tx.reference,
+                    'contact_name': tx.contact.name if tx.contact else None,
+                    'date': tx.date.isoformat() if tx.date else None,
+                    'status': tx.status,
+                    'type': tx.type,
+                    'is_reconciled': tx.is_reconciled,
+                })
+
+        if date_matches:
+            print(f"Found {len(date_matches)} transactions matching date and amount")
+            return {'action': 'found', 'transactions': date_matches}, None
+
+        # No matching transaction found, create a new one as Sally suggested
+        print("No matching transaction found. Creating new bank transaction...")
+
+        bank_transaction = BankTransaction(
+            type="SPEND",
+            contact=Contact(
+                name="SMART Agency"
+            ),
+            line_items=[
+                LineItem(
+                    description="Payment to SMART Agency",
+                    quantity=1,
+                    unit_amount=target_amount,
+                    account_code="400"  # Default expense account
+                )
+            ],
+            bank_account=Account(
+                code="090"  # Default bank account
+            ),
+            date=target_date,
+            reference="SMART Agency"
         )
 
-        print("Found transactionsc count:", len(transactions.bank_transactions))
-        print("Found transactions:", transactions.to_dict())
+        response = accounting_api.create_bank_transactions(
+            xero_tenant_id=xero_tenant_id,
+            bank_transactions=BankTransactions(bank_transactions=[bank_transaction])
+        )
 
-        # Format matches
-        matches = []
-        for tx in transactions.bank_transactions:
-            assert not tx.is_reconciled
-            if tx.type != 'SPEND' or tx.status == 'DELETED':
-                print('skipping', tx.type)
-                continue
-            matches.append({
-                'contact_id': tx.contact.contact_id,
-                'contact_name': tx.contact.name,
-                'bank_transaction_id': tx.bank_transaction_id,
-                'total': tx.total,
-                'reference': tx.reference,
-                'status': tx.status,
-                'type': tx.type,
-                'date': tx.date.isoformat(),
-                'is_reconciled': tx.is_reconciled,
-            })
-            # matches.append({
-            #     'transaction_id': tx.bank_transaction_id,
-            #     'date': tx.date.strftime('%Y-%m-%d') if tx.date else 'N/A',
-            #     'amount': float(tx.total) if tx.total else 0,
-            #     'contact_name': tx.contact.contact_name if tx.contact and tx.contact.contact_name else 'No Contact',
-            #     'reference': tx.reference if tx.reference else 'No Reference',
-            #     'is_reconciled': tx.is_reconciled if hasattr(tx, 'is_reconciled') else False
-            # })
-
-        print('num matches', len(matches))
-        import ipdb; ipdb.set_trace()
-
-        return matches, None
+        if response.bank_transactions:
+            created_tx = response.bank_transactions[0]
+            result = {
+                'action': 'created',
+                'transaction': {
+                    'bank_transaction_id': created_tx.bank_transaction_id,
+                    'total': created_tx.total,
+                    'reference': created_tx.reference,
+                    'contact_name': created_tx.contact.name if created_tx.contact else None,
+                    'date': created_tx.date.isoformat() if created_tx.date else None,
+                    'status': created_tx.status,
+                    'type': created_tx.type,
+                }
+            }
+            print(f"Successfully created bank transaction: {created_tx.bank_transaction_id}")
+            return result, None
+        else:
+            return None, "Failed to create bank transaction"
 
     except Exception as e:
         print(f"Error details: {str(e)}")

@@ -100,11 +100,27 @@ def xero_token_required(function):
         if not xero_token:
             return redirect(url_for("login", _external=True))
 
-        from app2 import find_matching_bank_transaction
+        from app2 import find_or_create_bank_transaction
+        from datetime import date
+        target_date = date(2025, 5, 30)
+        target_amount = '2000.00'
         xero_tenant_id = get_xero_tenant_id()
-        matches, error = find_matching_bank_transaction(xero_tenant_id, api_client)
-        print('matches', matches)
-        print('error', error)
+        # matches, error = find_or_create_bank_transaction(
+        #     xero_tenant_id=xero_tenant_id,
+        #     api_client=api_client,
+        #     target_date=target_date,
+        #     target_amount=target_amount,
+        # )
+        # print('matches', matches)
+        # print('error', error)
+        bank, inv = find_or_create_bank_transaction(
+            xero_tenant_id=xero_tenant_id,
+            api_client=api_client,
+            target_date=date(2025, 6, 3),
+            target_amount='1000.00',
+        )
+        # if either set, its reconcilated.
+        import ipdb; ipdb.set_trace()
         return function(*args, **kwargs)
 
     return decorator
@@ -177,7 +193,7 @@ def accounting_account_read_all():
     code = get_code_snippet("ACCOUNTS","READ_ALL")
 
     #[ACCOUNTS:READ_ALL]
-    xero_tenant_id = get_xero_tenant_id()
+    xero_tenant_id = get_xero_tenant_id(kwargs=True)
     accounting_api = AccountingApi(api_client)
     order = 'Name ASC'
 
