@@ -41,6 +41,51 @@ accounting_api.get_bank_transactions(xero_tenant_id, where='Total=4500 && status
 """
 
 
+def search_for_reconciliation(xero_tenant_id, api_client, target_date, target_amount):
+    """
+    Search for bank transactions matching specific criteria using where filter and pagination.
+    If no matching transaction is found, create a new one.
+    Based on Sally's suggestion from Xero support.
+    Returns a tuple of (result, error_message)
+    """
+    accounting_api = AccountingApi(api_client)
+    # Search for existing bank transactions using where filter as Sally suggested
+    where_filter = f'Total=={target_amount} && Status!="DELETED"'
+    print(f"Searching for bank transactions with filter: {where_filter}")
+
+    # Since it's an Invoice OR Receipt we are searching for,
+    # and since Invoice documents do not always have paid status.
+    # ``target_date`` could just be the date from which the
+    # invoice was created.
+    where_clause = (
+        f'Total=={target_amount} && '
+        f'Date>=DateTime({target_date.year},{target_date.month:02d},{target_date.day:02d})'
+    )
+
+    transactions = accounting_api.get_bank_transactions(
+        xero_tenant_id,
+        where=where_clause,
+        order="Date DESC",
+        if_modified_since=target_date
+    )
+    invoices = accounting_api.get_invoices(
+        xero_tenant_id,
+        where=where_clause,
+        order="Date DESC",
+    )
+    not_found = len(transactions.bank_transactions) == 0 and len(invoices.invoices) == 0
+    not_reconciled = not_found
+    if not_reconciled:
+        print('Not reconciled')
+    else:
+        print('Reconciled')
+    return {
+        'bank_transactions': transactions.bank_transactions,
+        'invoices': invoices.invoices,
+        'is_reconciled': not not_reconciled,
+    }
+
+
 def find_or_create_bank_transaction(xero_tenant_id, api_client, target_date, target_amount):
     """
     Search for bank transactions matching specific criteria using where filter and pagination.
@@ -49,48 +94,77 @@ def find_or_create_bank_transaction(xero_tenant_id, api_client, target_date, tar
     Returns a tuple of (result, error_message)
     """
     accounting_api = AccountingApi(api_client)
+    # Search for existing bank transactions using where filter as Sally suggested
+    where_filter = f'Total=={target_amount} && Status!="DELETED"'
+    print(f"Searching for bank transactions with filter: {where_filter}")
 
-    # Hardcoded search criteria as requested
-    target_reference = "SMART Agency"
+    # Since it's an Invoice OR Receipt we are searching for,
+    # and since Invoice documents do not always have paid status.
+    # ``target_date`` could just be the date from which the
+    # invoice was created.
+    where_clause = (
+        f'Total=={target_amount} && '
+        f'Date>=DateTime({target_date.year},{target_date.month:02d},{target_date.day:02d})'
+    )
+
+    transactions = accounting_api.get_bank_transactions(
+        xero_tenant_id,
+        where=where_clause,
+        order="Date DESC",
+        if_modified_since=target_date
+    )
+    invoices = accounting_api.get_invoices(
+        xero_tenant_id,
+        where=where_clause,
+        order="Date DESC",
+    )
+    not_found = len(transactions.bank_transactions) == 0 and len(invoices.invoices) == 0
+    not_reconciled = not_found
+    if not_reconciled:
+        print('Not reconciled')
+    else:
+        print('Reconciled')
+    return {
+        'bank_transactions': transactions.bank_transactions,
+        'invoices': invoices.invoices,
+        'is_reconciled': not not_reconciled,
+    }
 
     try:
         # Search for existing bank transactions using where filter as Sally suggested
         where_filter = f'Total=={target_amount} && Status!="DELETED"'
         print(f"Searching for bank transactions with filter: {where_filter}")
-        # import ipdb; ipdb.set_trace()
+
+        # Since it's an Invoice OR Receipt we are searching for,
+        # and since Invoice documents do not always have paid status.
+        # ``target_date`` could just be the date from which the
+        # invoice was created.
+        where_clause = (
+            f'Total=={target_amount} && '
+            f'Date>=DateTime({target_date.year},{target_date.month:02d},{target_date.day:02d})'
+        )
+
         transactions = accounting_api.get_bank_transactions(
             xero_tenant_id,
-            where=(
-                f'Total=={target_amount} && '
-                # f'Total=={target_amount} && Status!="DELETED" && '
-                f'Date>=DateTime({target_date.year},{target_date.month:02d},{target_date.day:02d})'
-            ),
+            where=where_clause,
             order="Date DESC",
             if_modified_since=target_date
         )
         invoices = accounting_api.get_invoices(
             xero_tenant_id,
-            where=(
-                f'Total=={target_amount} && '
-                # f'Total=={target_amount} && Status!="DELETED" && '
-                f'Date>=DateTime({target_date.year},{target_date.month:02d},{target_date.day:02d})'
-            ),
+            where=where_clause,
             order="Date DESC",
         )
         not_found = len(transactions.bank_transactions) == 0 and len(invoices.invoices) == 0
-        return transactions.bank_transactions, invoices.invoices
-        if not_found:
-            print(
-                "!!!!!! NO matching transaction found. "
-                f"target_date: {target_date}, target_mount {target_amount}"
-            )
+        not_reconciled = not_found
+        if not_reconciled:
+            print('Not reconciled')
         else:
-            print(
-                "Found matching transaction."
-                f"target_date: {target_date}, target_mount {target_amount}"
-            )
-
-        return None, None
+            print('Reconciled')
+        return {
+            'bank_transactions': transactions.bank_transactions,
+            'invoices': invoices.invoices,
+        }
 
         print(f"Found {len(transactions.bank_transactions)} transactions matching amount criteria")
 
